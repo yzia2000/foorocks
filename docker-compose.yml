@@ -3,12 +3,38 @@ services:
   broker:
     image: quay.io/strimzi/kafka:0.26.1-kafka-3.0.0
     command:
-      - sh
+      - bash
       - -c
       - |-
-        mkdir -p /home/kafka/data &&
-        chown -R kafka /home/kafka/data &&
-        su -c "./bin/kafka-storage.sh format -t $$(./bin/kafka-storage.sh random-uuid) -c ./custom-config/server.properties --ignore-formatted" &&
+        mkdir -p /home/kafka/data
+        chown -R kafka /home/kafka/data
+        mkdir -p /opt/kafka/custom-config
+        cat << EOF > /opt/kafka/custom-config/server.properties
+        process.roles=broker,controller
+        node.id=1
+        controller.quorum.voters=1@localhost:9093
+        listeners=PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
+        inter.broker.listener.name=PLAINTEXT
+        advertised.listeners=PLAINTEXT://broker:9092,PLAINTEXT_HOST://127.0.0.1:29092
+        controller.listener.names=CONTROLLER
+        listener.security.protocol.map=PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL
+        num.network.threads=3
+        num.io.threads=8
+        socket.send.buffer.bytes=102400
+        socket.receive.buffer.bytes=102400
+        socket.request.max.bytes=104857600
+        log.dirs=/home/kafka/data
+        num.partitions=1
+        num.recovery.threads.per.data.dir=1
+        offsets.topic.replication.factor=1
+        transaction.state.log.replication.factor=1
+        transaction.state.log.min.isr=1
+        log.retention.hours=168
+        log.segment.bytes=1073741824
+        log.retention.check.interval.ms=300000
+        message.max.bytes=50485760
+        EOF
+        su -c "./bin/kafka-storage.sh format -t $$(./bin/kafka-storage.sh random-uuid) -c ./custom-config/server.properties --ignore-formatted"
         su -c "./bin/kafka-server-start.sh ./custom-config/server.properties"
     environment:
       LOG_DIR: /tmp/logs
@@ -19,7 +45,6 @@ services:
     tty: true
     user: root
     volumes:
-      - ./docker-compose/kafka-server.properties:/opt/kafka/custom-config/server.properties
       - kafka-data:/home/kafka/data
     mem_limit: 2g
 
