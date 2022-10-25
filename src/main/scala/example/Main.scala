@@ -22,10 +22,15 @@ object KafkaBackend {
   val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
   val GROUP = "foorocks"
   val TOPIC_NAME = "movements"
+  val STOCK_CHANGELOG_TOPIC_NAME = "stocks-changelog"
 
   val consumerSettings: ConsumerSettings =
     ConsumerSettings(List(KAFKA_BOOTSTRAP_SERVER))
       .withGroupId(GROUP)
+      .withOffsetRetrieval(
+        Consumer.OffsetRetrieval.Auto(Consumer.AutoOffsetStrategy.Earliest)
+      )
+
   val producerSettings: ProducerSettings = ProducerSettings(
     List(KAFKA_BOOTSTRAP_SERVER)
   )
@@ -111,13 +116,14 @@ object StockService {
           )
           bytes <- ZIO.fromOption(byteOption)
           stock <- deserializeZIO[Stock](Chunk.fromArray(bytes))
+          updatedStock = stock.copy(price = stock.price + movement.change)
           _ <- rocksdb.Transaction.put(
             stock.id,
-            stock.copy(price = stock.price + movement.change)
+            updatedStock
           )
-        } yield ()
+        } yield (updatedStock)
       }
-    } yield ()
+    } yield (result)
   }
 
   def getStock(id: UUID) = {
@@ -133,7 +139,7 @@ object StockService {
   }
 }
 
-object App {
+object HttpApi {
   import ImplicitSerde._
 
   case class StockRecordNotFound(id: String)
@@ -160,28 +166,62 @@ object Main extends ZIOAppDefault {
     Stock(symbol = "amzn")
   )
 
+  def restorePreviousBackup = for {
+    // Add base Stock values to RocksDB
+    _ <- ZStream
+      .fromChunk(STOCKS)
+      .mapZIO { stock =>
+        StockService.addStock(stock)
+      }
+      .runDrain
+
+    // KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME contains a backup of the
+    // RocksDB data. Read this backup so in case application previously
+    // crashed, RocksDB stocks state is recreated.
+    _ <- Consumer
+      .subscribeAnd(
+        Subscription.topics(KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME)
+      )
+      .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Stock])
+      .tap({
+        case CommittableRecord(record, _) => {
+          Console.printLine(
+            s"Consuming Stock ChangeLog Record: (${record.key()}, ${record.value()})"
+          )
+        }
+      })
+      .tapSink(
+        // Sink that updates stock state based on movements in RocksDB
+        ZSink
+          .foreach((committableRecord: CommittableRecord[UUID, Stock]) =>
+            StockService.addStock(
+              committableRecord.record.value()
+            )
+          )
+      )
+      .map(_.offset)
+      .aggregateAsync(Consumer.offsetBatches)
+      .mapZIO(_.commit)
+      .timeout(10.seconds)
+      .runDrain
+  } yield ()
+
   def scopedApp =
     for {
-      _ <- ZIO.unit
-
-      // Add base Stock values to RocksDB
-      _ <- ZStream
-        .fromChunk(STOCKS)
-        .mapZIO { stock =>
-          StockService.addStock(stock)
-        }
-        .runDrain
+      // Preparing RocksDB from backup (or default values if no backup exists)
+      _ <- restorePreviousBackup
 
       // Stock movement simulator
-      producer = ZStream
+      movementProducer = ZStream
         .repeatZIOChunk(ZIO.succeed(STOCKS))
         .schedule(Schedule.fixed(1.second))
         .mapZIO { stock =>
           for {
-            randomChange <- Random.nextDoubleBetween(-1000, 1000)
-            _ <- Producer.produce(
+            randomChange <- Random.nextDoubleBetween(-20, 20)
+            randomUuid <- Random.nextUUID
+            _ <- Producer.produceAsync(
               KafkaBackend.TOPIC_NAME,
-              stock.id,
+              randomUuid,
               Movement(stockId = stock.id, change = randomChange),
               zioKafkaSerde[UUID],
               zioKafkaSerde[Movement]
@@ -191,24 +231,33 @@ object Main extends ZIOAppDefault {
         .drain
 
       // Stock movement consumer which stores state in RocksDB
-      consumer = Consumer
+      movementConsumer = Consumer
         .subscribeAnd(Subscription.topics(KafkaBackend.TOPIC_NAME))
         .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Movement])
         .tap({
           case CommittableRecord(record, _) => {
             Console.printLine(
-              record.value()
+              s"Consuming Movement Record: (${record.key()}, ${record.value()})"
             )
           }
         })
         .tapSink(
           // Sink that updates stock state based on movements in RocksDB
           ZSink
-            .foreach((committableRecord) => {
-              StockService.updateStock(
-                committableRecord.record.value()
-              )
-            })
+            .foreach((committableRecord: CommittableRecord[UUID, Movement]) =>
+              for {
+                stock <- StockService.updateStock(
+                  committableRecord.record.value()
+                )
+                _ <- Producer.produceAsync(
+                  KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
+                  committableRecord.record.key(),
+                  stock,
+                  zioKafkaSerde[UUID],
+                  zioKafkaSerde[Stock]
+                )
+              } yield ()
+            )
         )
         .map(_.offset)
         .aggregateAsync(Consumer.offsetBatches)
@@ -217,18 +266,21 @@ object Main extends ZIOAppDefault {
 
       // Server that receives HTTP requests to access stock values
       // by event-sourcing application
-      server = ZStream
+      httpServer = ZStream
         .fromZIO(
           Server.start(
             PORT,
-            App.app @@ (Middleware.debug ++ Middleware.timeout(10.seconds))
+            HttpApi.app @@ (Middleware.debug ++ Middleware.timeout(10.seconds))
           )
         )
+
+      // Merging all into one so if any one of the subsystems crash,
+      // the other streams are closed gracefully
       _ <- ZStream
         .mergeAllUnbounded(16)(
-          producer,
-          consumer,
-          server
+          movementProducer,
+          movementConsumer,
+          httpServer
         )
         .runDrain
     } yield ()
