@@ -1,0 +1,28 @@
+version: "2.4"
+services:
+  broker:
+    image: quay.io/strimzi/kafka:0.26.1-kafka-3.0.0
+    command:
+      - sh
+      - -c
+      - |-
+        mkdir -p /home/kafka/data &&
+        chown -R kafka /home/kafka/data &&
+        su -c "./bin/kafka-storage.sh format -t $$(./bin/kafka-storage.sh random-uuid) -c ./custom-config/server.properties --ignore-formatted" &&
+        su -c "./bin/kafka-server-start.sh ./custom-config/server.properties"
+    environment:
+      LOG_DIR: /tmp/logs
+      KAFKA_JVM_PERFORMANCE_OPTS: -Xmx1000m -Xms1000m
+    ports:
+      - "127.0.0.1:29092:29092"
+    init: true
+    tty: true
+    user: root
+    volumes:
+      - ./docker-compose/kafka-server.properties:/opt/kafka/custom-config/server.properties
+      - kafka-data:/home/kafka/data
+    mem_limit: 1.5g
+
+volumes:
+  kafka-data:
+    name: foorocks-kafka-data
