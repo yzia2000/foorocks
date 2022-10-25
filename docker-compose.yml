@@ -12,7 +12,7 @@ services:
         su -c "./bin/kafka-server-start.sh ./custom-config/server.properties"
     environment:
       LOG_DIR: /tmp/logs
-      KAFKA_JVM_PERFORMANCE_OPTS: -Xmx1000m -Xms1000m
+      KAFKA_JVM_PERFORMANCE_OPTS: -Xmx1500m -Xms1500m
     ports:
       - "127.0.0.1:29092:29092"
     init: true
@@ -21,7 +21,7 @@ services:
     volumes:
       - ./docker-compose/kafka-server.properties:/opt/kafka/custom-config/server.properties
       - kafka-data:/home/kafka/data
-    mem_limit: 1.5g
+    mem_limit: 2g
 
 volumes:
   kafka-data:
