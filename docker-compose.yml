@@ -1,7 +1,7 @@
 version: "2.4"
 services:
   broker:
-    image: quay.io/strimzi/kafka:0.26.1-kafka-3.0.0
+    image: quay.io/strimzi/kafka:0.27.1-kafka-3.0.0
     command:
       - bash
       - -c
@@ -9,6 +9,7 @@ services:
         mkdir -p /home/kafka/data
         chown -R kafka /home/kafka/data
         mkdir -p /opt/kafka/custom-config
+
         cat << EOF > /opt/kafka/custom-config/server.properties
         process.roles=broker,controller
         node.id=1
@@ -34,6 +35,7 @@ services:
         log.retention.check.interval.ms=300000
         message.max.bytes=50485760
         EOF
+
         su -c "./bin/kafka-storage.sh format -t $$(./bin/kafka-storage.sh random-uuid) -c ./custom-config/server.properties --ignore-formatted"
         su -c "./bin/kafka-server-start.sh ./custom-config/server.properties"
     environment:

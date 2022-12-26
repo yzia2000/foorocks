@@ -1,9 +1,9 @@
-package main
+package foorocks
 
 import org.apache.kafka.clients.producer.ProducerRecord
-import zhttp.http._
-import zhttp.service.Server
 import zio._
+import zio.http._
+import zio.http.model._
 import zio.kafka._
 import zio.kafka.consumer._
 import zio.kafka.producer._
@@ -19,10 +19,10 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 object KafkaBackend {
-  val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
-  val GROUP = "foorocks"
-  val TOPIC_NAME = "movements"
-  val STOCK_CHANGELOG_TOPIC_NAME = "stocks-changelog"
+  final val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
+  final val GROUP = "foorocks"
+  final val TOPIC_NAME = "movements"
+  final val STOCK_CHANGELOG_TOPIC_NAME = "stocks-changelog"
 
   val consumerSettings: ConsumerSettings =
     ConsumerSettings(List(KAFKA_BOOTSTRAP_SERVER))
@@ -62,31 +62,36 @@ case class Movement(
 );
 
 object ImplicitSerde {
-  implicit val stockSchema = DeriveSchema.gen[Stock]
-  implicit val movementSchema = DeriveSchema.gen[Movement]
-  implicit val uuidSchema = Schema.primitive(StandardType.UUIDType)
+  implicit val stockSchema: Schema[Stock] = DeriveSchema.gen[Stock]
+  implicit val movementSchema: Schema[Movement] = DeriveSchema.gen[Movement]
+  implicit val uuidSchema: Schema[UUID] =
+    Schema.primitive(StandardType.UUIDType)
 
-  implicit def serialize[A](value: A)(implicit schema: Schema[A]) = {
+  implicit def serialize[A](
+      value: A
+  )(implicit schema: Schema[A]): Array[Byte] = {
     encode(schema)(value).toArray
   }
 
-  implicit def serializeZIO[A](value: A)(implicit schema: Schema[A]) = {
+  implicit def serializeZIO[A](
+      value: A
+  )(implicit schema: Schema[A]): ZIO[Any, Nothing, Array[Byte]] = {
     ZIO.succeed(serialize(value))
   }
 
   implicit def deserialize[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]) = {
+  )(implicit schema: Schema[A]): Either[String, A] = {
     decode(schema)(value)
   }
 
   implicit def deserializeZIO[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]) = {
+  )(implicit schema: Schema[A]): IO[String, A] = {
     ZIO.fromEither(decode(schema)(value))
   }
 
-  implicit def zioKafkaSerde[A](implicit schema: Schema[A]) =
+  implicit def zioKafkaSerde[A](implicit schema: Schema[A]): Serde[Any, A] =
     Serde.byteArray.inmapM(bytes =>
       deserializeZIO[A](Chunk.fromArray(bytes)).mapError(new Exception(_))
     )(serializeZIO _)
@@ -208,77 +213,66 @@ object Main extends ZIOAppDefault {
 
   def scopedApp =
     for {
+      _ <- ZIO.unit
       // Preparing RocksDB from backup (or default values if no backup exists)
       _ <- restorePreviousBackup
-
-      // Stock movement simulator
-      movementProducer = ZStream
-        .repeatZIOChunk(ZIO.succeed(STOCKS))
-        .schedule(Schedule.fixed(1.second))
-        .mapZIO { stock =>
-          for {
-            randomChange <- Random.nextDoubleBetween(-20, 20)
-            randomUuid <- Random.nextUUID
-            _ <- Producer.produceAsync(
-              KafkaBackend.TOPIC_NAME,
-              randomUuid,
-              Movement(stockId = stock.id, change = randomChange),
-              zioKafkaSerde[UUID],
-              zioKafkaSerde[Movement]
-            )
-          } yield ()
-        }
-        .drain
 
       // Stock movement consumer which stores state in RocksDB
       movementConsumer = Consumer
         .subscribeAnd(Subscription.topics(KafkaBackend.TOPIC_NAME))
         .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Movement])
-        .tap({
-          case CommittableRecord(record, _) => {
-            Console.printLine(
-              s"Consuming Movement Record: (${record.key()}, ${record.value()})"
-            )
-          }
-        })
+        .aggregateAsyncWithin(
+          ZSink.collectAllN[CommittableRecord[UUID, Movement]](10000),
+          Schedule.fixed(1.seconds)
+        )
+        .tap(records =>
+          Console.printLine(
+            s"Consuming Movement Record: ${records.map(_.record.value)}"
+          )
+        )
         .tapSink(
           // Sink that updates stock state based on movements in RocksDB
           ZSink
-            .foreach((committableRecord: CommittableRecord[UUID, Movement]) =>
-              for {
-                stock <- StockService.updateStock(
-                  committableRecord.record.value()
-                )
-                _ <- Producer.produceAsync(
-                  KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
-                  committableRecord.record.key(),
-                  stock,
-                  zioKafkaSerde[UUID],
-                  zioKafkaSerde[Stock]
-                )
-              } yield ()
+            .foreach(
+              (movementRecords: Chunk[CommittableRecord[UUID, Movement]]) =>
+                for {
+                  _ <- ZIO.unit
+                  combinedMovement = movementRecords
+                    .map(_.value)
+                    .reduce[Movement]((left, right) =>
+                      left.copy(change = left.change + right.change)
+                    )
+                  stock <- StockService.updateStock(
+                    combinedMovement
+                  )
+                  _ <- Producer.produceAsync(
+                    KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
+                    stock.id,
+                    stock,
+                    zioKafkaSerde[UUID],
+                    zioKafkaSerde[Stock]
+                  )
+                  _ <- Console.printLine(stock)
+                } yield ()
             )
         )
-        .map(_.offset)
-        .aggregateAsync(Consumer.offsetBatches)
-        .mapZIO(_.commit)
+        .mapZIO(_.map(_.offset).collectZIO(_.commit))
         .drain
 
       // Server that receives HTTP requests to access stock values
       // by event-sourcing application
-      httpServer = ZStream
-        .fromZIO(
-          Server.start(
-            PORT,
-            HttpApi.app @@ (Middleware.debug ++ Middleware.timeout(10.seconds))
+      httpServer = ZStream.fromZIO(
+        Server
+          .serve(
+            HttpApi.app @@ (Middleware.debug ++ Middleware
+              .timeout(10.seconds))
           )
-        )
+      )
 
       // Merging all into one so if any one of the subsystems crash,
       // the other streams are closed gracefully
       _ <- ZStream
         .mergeAllUnbounded(16)(
-          movementProducer,
           movementConsumer,
           httpServer
         )
@@ -288,6 +282,10 @@ object Main extends ZIOAppDefault {
   def run =
     ZIO
       .scoped(scopedApp)
-      .provide(RocksDBBackend.database, KafkaBackend.consumerAndProducer)
+      .provide(
+        RocksDBBackend.database,
+        KafkaBackend.consumerAndProducer,
+        Server.default
+      )
       .exitCode
 }
