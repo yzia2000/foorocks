@@ -166,9 +166,18 @@ object Main extends ZIOAppDefault {
   val PORT = 5050
 
   val STOCKS = Chunk(
-    Stock(symbol = "nflx"),
-    Stock(symbol = "glts"),
-    Stock(symbol = "amzn")
+    Stock(
+      id = UUID.fromString("cf378884-1f4c-4055-9375-8b6634d7c6fc"),
+      symbol = "nflx"
+    ),
+    Stock(
+      id = UUID.fromString("26efb03d-3ab6-4927-aaa6-d001072c9559"),
+      symbol = "glts"
+    ),
+    Stock(
+      id = UUID.fromString("8a4b159b-63a6-4523-82ef-76d52054fa2b"),
+      symbol = "amzn"
+    )
   )
 
   def restorePreviousBackup = for {
@@ -237,22 +246,29 @@ object Main extends ZIOAppDefault {
               (movementRecords: Chunk[CommittableRecord[UUID, Movement]]) =>
                 for {
                   _ <- ZIO.unit
-                  combinedMovement = movementRecords
-                    .map(_.value)
-                    .reduce[Movement]((left, right) =>
-                      left.copy(change = left.change + right.change)
+                  movements = movementRecords.map(_.value)
+                  combinedMovements = movements
+                    .groupBy(_.stockId)
+                    .map { case (key, value) =>
+                      value.reduce[Movement]((left, right) =>
+                        left.copy(change = left.change + right.change)
+                      )
+                    }
+                  stocks <- ZIO.foreach(combinedMovements)(
+                    StockService.updateStock(
+                      _
                     )
-                  stock <- StockService.updateStock(
-                    combinedMovement
                   )
-                  _ <- Producer.produceAsync(
-                    KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
-                    stock.id,
-                    stock,
-                    zioKafkaSerde[UUID],
-                    zioKafkaSerde[Stock]
+                  _ <- ZIO.foreach(stocks)(stock =>
+                    Producer.produceAsync(
+                      KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
+                      stock.id,
+                      stock,
+                      zioKafkaSerde[UUID],
+                      zioKafkaSerde[Stock]
+                    )
                   )
-                  _ <- Console.printLine(stock)
+                  _ <- Console.printLine(stocks)
                 } yield ()
             )
         )
