@@ -17,6 +17,7 @@ import zio.stream.ZStream
 
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import zio.schema.codec.DecodeError
 
 object KafkaBackend {
   val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
@@ -64,13 +65,11 @@ case class Movement(
 object ImplicitSerde {
   implicit val stockSchema: Schema[Stock] = DeriveSchema.gen[Stock]
   implicit val movementSchema: Schema[Movement] = DeriveSchema.gen[Movement]
-  implicit val uuidSchema: Schema[UUID] =
-    Schema.primitive(StandardType.UUIDType)
 
   implicit def serialize[A](
       value: A
   )(implicit schema: Schema[A]): Array[Byte] = {
-    encode(schema)(value).toArray
+    schemaBasedBinaryCodec[A].encode(value).toArray
   }
 
   implicit def serializeZIO[A](
@@ -81,14 +80,14 @@ object ImplicitSerde {
 
   implicit def deserialize[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]): Either[String, A] = {
-    decode(schema)(value)
+  )(implicit schema: Schema[A]): Either[DecodeError, A] = {
+    schemaBasedBinaryCodec[A].decode(value)
   }
 
   implicit def deserializeZIO[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]): IO[String, A] = {
-    ZIO.fromEither(decode(schema)(value))
+  )(implicit schema: Schema[A]): IO[DecodeError, A] = {
+    ZIO.fromEither(deserialize[A](value))
   }
 
   implicit def zioKafkaSerde[A](implicit schema: Schema[A]): Serde[Any, A] =
@@ -199,7 +198,7 @@ object Main extends ZIOAppDefault {
       .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Stock])
       .tap({
         case CommittableRecord(record, _) => {
-          Console.printLine(
+          ZIO.logInfo(
             s"Consuming Stock ChangeLog Record: (${record.key()}, ${record.value()})"
           )
         }
@@ -235,7 +234,7 @@ object Main extends ZIOAppDefault {
           Schedule.fixed(1.seconds)
         )
         .tap(records =>
-          Console.printLine(
+          ZIO.logInfo(
             s"Consuming Movement Record: ${records.map(_.record.value)}"
           )
         )

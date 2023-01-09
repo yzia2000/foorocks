@@ -33,13 +33,15 @@ object StockPriceSimulator extends ZIOAppDefault {
       for {
         randomChange <- Random.nextDoubleBetween(-20, 20)
         randomUuid <- Random.nextUUID
-        _ <- Producer.produceAsync(
-          KafkaBackend.TOPIC_NAME,
-          randomUuid,
-          Movement(stockId = stock.id, change = randomChange),
-          zioKafkaSerde[UUID],
-          zioKafkaSerde[Movement]
-        )
+        result <- Producer
+          .produceAsync(
+            KafkaBackend.TOPIC_NAME,
+            randomUuid,
+            Movement(stockId = stock.id, change = randomChange),
+            zioKafkaSerde[UUID],
+            zioKafkaSerde[Movement]
+          )
+          .logError
       } yield ()
     }
     .runDrain
