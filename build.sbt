@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "2.13.10"
+ThisBuild / scalaVersion := "3.2.1"
 ThisBuild / version := "0.1.0-SNAPSHOT"
 
 Global / onChangedBuildSource := ReloadOnSourceChanges
@@ -6,7 +6,7 @@ Global / fork := true
 Global / connectInput := true
 Global / cancelable := true
 
-val zioSchemaVersion = "0.2.1"
+val zioSchemaVersion = "0.4.2"
 
 lazy val root = (project in file("."))
   .settings(
@@ -14,7 +14,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= List(
       "dev.zio" %% "zio" % "2.0.5",
       "dev.zio" %% "zio-streams" % "2.0.5",
-      "dev.zio" %% "zio-kafka" % "2.0.2",
+      "dev.zio" %% "zio-kafka" % "2.0.3",
       "dev.zio" %% "zio-http" % "0.0.3",
       "dev.zio" %% "zio-schema" % zioSchemaVersion,
       "dev.zio" %% "zio-schema-protobuf" % zioSchemaVersion,
