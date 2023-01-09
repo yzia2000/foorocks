@@ -16,6 +16,12 @@ import zio.stream.ZStream
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+object StockPriceProducerBackend {
+  val producer = ZLayer.scoped(
+    Producer.make(KafkaBackend.producerSettings)
+  )
+}
+
 object StockPriceSimulator extends ZIOAppDefault {
   import ImplicitSerde._
 
@@ -40,6 +46,6 @@ object StockPriceSimulator extends ZIOAppDefault {
 
   def run =
     app
-      .provide(KafkaBackend.consumerAndProducer)
+      .provide(StockPriceProducerBackend.producer)
       .exitCode
 }

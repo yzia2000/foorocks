@@ -19,10 +19,10 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 object KafkaBackend {
-  final val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
-  final val GROUP = "foorocks"
-  final val TOPIC_NAME = "movements"
-  final val STOCK_CHANGELOG_TOPIC_NAME = "stocks-changelog"
+  val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
+  val GROUP = "foorocks"
+  val TOPIC_NAME = "movements"
+  val STOCK_CHANGELOG_TOPIC_NAME = "stocks-changelog"
 
   val consumerSettings: ConsumerSettings =
     ConsumerSettings(List(KAFKA_BOOTSTRAP_SERVER))
