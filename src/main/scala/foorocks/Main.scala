@@ -14,10 +14,13 @@ import zio.schema._
 import zio.schema.codec.JsonCodec._
 import zio.stream.ZSink
 import zio.stream.ZStream
+import zio.logging.backend.SLF4J
 
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import zio.schema.codec.DecodeError
+import zio.logging.LogFormat
+import zio.logging.slf4j.bridge.Slf4jBridge
 
 object KafkaBackend {
   val KAFKA_BOOTSTRAP_SERVER = "localhost:29092"
@@ -267,7 +270,7 @@ object Main extends ZIOAppDefault {
                       zioKafkaSerde[Stock]
                     )
                   )
-                  _ <- Console.printLine(stocks)
+                  _ <- ZIO.logInfo(stocks.toString())
                 } yield ()
             )
         )
@@ -298,6 +301,7 @@ object Main extends ZIOAppDefault {
     ZIO
       .scoped(scopedApp)
       .provide(
+        Logger.live,
         RocksDBBackend.database,
         KafkaBackend.consumerAndProducer,
         Server.default
