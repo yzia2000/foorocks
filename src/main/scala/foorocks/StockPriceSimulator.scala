@@ -28,7 +28,7 @@ object StockPriceSimulator extends ZIOAppDefault {
   // Stock movement simulator
   def app = ZStream
     .repeatZIOChunk(ZIO.succeed(Main.STOCKS))
-    .schedule(Schedule.fixed(1.seconds))
+    .schedule(Schedule.fixed(100.millis))
     .mapZIO { stock =>
       for {
         randomChange <- Random.nextDoubleBetween(-20, 20)
@@ -48,6 +48,6 @@ object StockPriceSimulator extends ZIOAppDefault {
 
   def run =
     app
-      .provide(StockPriceProducerBackend.producer)
+      .provide(StockPriceProducerBackend.producer, Logger.live)
       .exitCode
 }
