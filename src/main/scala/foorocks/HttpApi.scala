@@ -22,7 +22,7 @@ import zio.logging.LogFormat
 import zio.logging.slf4j.bridge.Slf4jBridge
 
 object HttpApi {
-  import ImplicitSerde._
+  import ImplicitSerde.{_, given}
 
   case class StockRecordNotFound(id: String)
       extends Exception(s"Could not find stock: ${id}")
@@ -36,4 +36,3 @@ object HttpApi {
       } yield Response.json(new String(serialize(stock)))
     }
 }
-

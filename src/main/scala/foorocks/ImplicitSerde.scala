@@ -22,34 +22,49 @@ import zio.logging.LogFormat
 import zio.logging.slf4j.bridge.Slf4jBridge
 
 object ImplicitSerde {
-  implicit val stockSchema: Schema[Stock] = DeriveSchema.gen[Stock]
-  implicit val movementSchema: Schema[Movement] = DeriveSchema.gen[Movement]
+  given stockSchema: Schema[Stock] = DeriveSchema.gen[Stock]
+  given movementSchema: Schema[Movement] = DeriveSchema.gen[Movement]
 
-  implicit def serialize[A](
+  def serialize[A](
       value: A
-  )(implicit schema: Schema[A]): Array[Byte] = {
+  )(using schema: Schema[A]): Array[Byte] = {
     schemaBasedBinaryCodec[A].encode(value).toArray
   }
 
-  implicit def serializeZIO[A](
+  given implicitSerialization[A: Schema]: Conversion[A, Array[Byte]] =
+    serialize(_)
+
+  def serializeZIO[A](
       value: A
-  )(implicit schema: Schema[A]): ZIO[Any, Nothing, Array[Byte]] = {
+  )(using schema: Schema[A]): ZIO[Any, Nothing, Array[Byte]] = {
     ZIO.succeed(serialize(value))
   }
 
-  implicit def deserialize[A](
+  given implicitSerializationZIO[A: Schema]
+      : Conversion[A, ZIO[Any, Nothing, Array[Byte]]] =
+    serializeZIO(_)
+
+  def deserialize[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]): Either[DecodeError, A] = {
+  )(using schema: Schema[A]): Either[DecodeError, A] = {
     schemaBasedBinaryCodec[A].decode(value)
   }
 
-  implicit def deserializeZIO[A](
+  given implicitDeserialization[A: Schema]
+      : Conversion[Chunk[Byte], Either[DecodeError, A]] =
+    deserialize(_)
+
+  def deserializeZIO[A](
       value: Chunk[Byte]
-  )(implicit schema: Schema[A]): IO[DecodeError, A] = {
+  )(using schema: Schema[A]): IO[DecodeError, A] = {
     ZIO.fromEither(deserialize[A](value))
   }
 
-  implicit def zioKafkaSerde[A](implicit schema: Schema[A]): Serde[Any, A] =
+  given implicitDeserializationZIO[A: Schema]
+      : Conversion[Chunk[Byte], IO[DecodeError, A]] =
+    deserializeZIO(_)
+
+  def zioKafkaSerde[A](using schema: Schema[A]): Serde[Any, A] =
     Serde.byteArray.inmapM(bytes =>
       deserializeZIO[A](Chunk.fromArray(bytes)).mapError(new Exception(_))
     )(serializeZIO _)

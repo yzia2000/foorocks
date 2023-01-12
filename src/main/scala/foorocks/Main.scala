@@ -34,7 +34,7 @@ case class Movement(
 );
 
 object Main extends ZIOAppDefault {
-  import ImplicitSerde._
+  import ImplicitSerde.{_, given}
 
   val PORT = 5050
 

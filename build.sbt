@@ -11,6 +11,7 @@ val zioSchemaVersion = "0.4.2"
 lazy val root = (project in file("."))
   .settings(
     name := "foorocks",
+    scalacOptions ++= List("-language:implicitConversions", "-feature"),
     libraryDependencies ++= List(
       "dev.zio" %% "zio" % "2.0.5",
       "dev.zio" %% "zio-streams" % "2.0.5",

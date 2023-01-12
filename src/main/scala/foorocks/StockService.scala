@@ -22,7 +22,7 @@ import zio.logging.LogFormat
 import zio.logging.slf4j.bridge.Slf4jBridge
 
 object StockService {
-  import ImplicitSerde._
+  import ImplicitSerde.{_, given}
 
   def addStock(stock: Stock) = {
     for {
@@ -67,4 +67,3 @@ object StockService {
     } yield (stock)
   }
 }
-

@@ -23,7 +23,7 @@ object StockPriceProducerBackend {
 }
 
 object StockPriceSimulator extends ZIOAppDefault {
-  import ImplicitSerde._
+  import ImplicitSerde.{_, given}
 
   // Stock movement simulator
   def app = ZStream
