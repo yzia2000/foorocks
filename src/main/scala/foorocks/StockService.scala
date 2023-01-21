@@ -34,30 +34,29 @@ object StockService {
     } yield ()
   }
 
-  def updateStock(movement: Movement) = {
+  def updateStock(
+      movement: Movement
+  ): ZIO[RocksDB, Object, Stock] = {
     for {
-      _ <- ZIO.unit
-      result <- TransactionDB.atomically {
-        for {
-          byteOption <- rocksdb.Transaction.getForUpdate(
-            movement.stockId,
-            true
-          )
-          bytes <- ZIO.fromOption(byteOption)
-          stock <- deserializeZIO[Stock](Chunk.fromArray(bytes))
-          updatedStock = stock.copy(price = stock.price + movement.change)
-          _ <- rocksdb.Transaction.put(
-            stock.id,
-            updatedStock
-          )
-        } yield (updatedStock)
-      }
-    } yield (result)
+      stock <- getStock(
+        movement.stockId
+      )
+      updatedStock = stock.copy(price = stock.price + movement.change)
+      _ <- putStock(updatedStock)
+    } yield (updatedStock)
   }
 
-  def getStock(id: UUID) = {
+  def putStock(stock: Stock): ZIO[RocksDB, Throwable, Unit] = {
     for {
-      _ <- ZIO.unit
+      _ <- RocksDB.put(
+        stock.id,
+        stock
+      )
+    } yield ()
+  }
+
+  def getStock(id: UUID): ZIO[RocksDB, Object, Stock] = {
+    for {
       bytesOption <- RocksDB
         .get(
           id
