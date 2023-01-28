@@ -7,35 +7,22 @@ import zio.http.model._
 import zio.kafka._
 import zio.kafka.consumer._
 import zio.kafka.producer._
-import zio.kafka.serde._
+import zio.logging.LogFormat
+import zio.logging.backend.SLF4J
+import zio.logging.slf4j.bridge.Slf4jBridge
 import zio.rocksdb.RocksDB
 import zio.rocksdb.TransactionDB
 import zio.schema._
+import zio.schema.codec.DecodeError
 import zio.schema.codec.JsonCodec._
 import zio.stream.ZSink
 import zio.stream.ZStream
-import zio.logging.backend.SLF4J
 
 import java.nio.charset.StandardCharsets
 import java.util.UUID
-import zio.schema.codec.DecodeError
-import zio.logging.LogFormat
-import zio.logging.slf4j.bridge.Slf4jBridge
-
-case class Stock(
-    id: UUID = UUID.randomUUID(),
-    symbol: String,
-    price: BigDecimal = 0
-);
-
-case class Movement(
-    stockId: UUID,
-    change: BigDecimal = 0
-);
+import scala.deriving.*
 
 object Main extends ZIOAppDefault {
-  import ImplicitSerde.{_, given}
-
   val PORT = 5050
 
   val STOCKS = Chunk(
@@ -69,7 +56,10 @@ object Main extends ZIOAppDefault {
       .subscribeAnd(
         Subscription.topics(KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME)
       )
-      .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Stock])
+      .plainStream(
+        foorocks.Serde.zioKafkaSerde[UUID],
+        foorocks.Serde.zioKafkaSerde[Stock]
+      )
       .tap({
         case CommittableRecord(record, _) => {
           ZIO.logInfo(
@@ -102,7 +92,7 @@ object Main extends ZIOAppDefault {
       // Stock movement consumer which stores state in RocksDB
       movementConsumer = Consumer
         .subscribeAnd(Subscription.topics(KafkaBackend.TOPIC_NAME))
-        .plainStream(zioKafkaSerde[UUID], zioKafkaSerde[Movement])
+        .plainStream(Serde.zioKafkaSerde[UUID], Serde.zioKafkaSerde[Movement])
         .aggregateAsyncWithin(
           ZSink.collectAllN[CommittableRecord[UUID, Movement]](10000),
           Schedule.fixed(1.seconds)
@@ -137,8 +127,8 @@ object Main extends ZIOAppDefault {
                       KafkaBackend.STOCK_CHANGELOG_TOPIC_NAME,
                       stock.id,
                       stock,
-                      zioKafkaSerde[UUID],
-                      zioKafkaSerde[Stock]
+                      Serde.zioKafkaSerde[UUID],
+                      Serde.zioKafkaSerde[Stock]
                     )
                   )
                   _ <- ZIO.logInfo(stocks.toString())

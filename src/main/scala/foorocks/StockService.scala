@@ -22,14 +22,14 @@ import zio.logging.LogFormat
 import zio.logging.slf4j.bridge.Slf4jBridge
 
 object StockService {
-  import ImplicitSerde.{_, given}
-
   def addStock(stock: Stock) = {
+    val keySerde = summon[foorocks.Serde[UUID]]
+    val valueSerde = summon[foorocks.Serde[Stock]]
     for {
       _ <- ZIO.unit
       _ <- rocksdb.TransactionDB.put(
-        stock.id,
-        stock
+        keySerde.serialize(stock.id),
+        valueSerde.serialize(stock)
       )
     } yield ()
   }
@@ -47,22 +47,26 @@ object StockService {
   }
 
   def putStock(stock: Stock): ZIO[RocksDB, Throwable, Unit] = {
+    val keySerde = summon[foorocks.Serde[UUID]]
+    val valueSerde = summon[foorocks.Serde[Stock]]
     for {
       _ <- RocksDB.put(
-        stock.id,
-        stock
+        keySerde.serialize(stock.id),
+        valueSerde.serialize(stock)
       )
     } yield ()
   }
 
   def getStock(id: UUID): ZIO[RocksDB, Object, Stock] = {
+    val keySerde = summon[foorocks.Serde[UUID]]
+    val valueSerde = summon[foorocks.Serde[Stock]]
     for {
       bytesOption <- RocksDB
         .get(
-          id
+          keySerde.serialize(id)
         )
       bytes <- ZIO.fromOption(bytesOption)
-      stock <- deserializeZIO[Stock](Chunk.fromArray(bytes))
+      stock <- valueSerde.deserializeZIO(bytes)
     } yield (stock)
   }
 }

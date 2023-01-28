@@ -5,7 +5,6 @@ import zio._
 import zio.kafka._
 import zio.kafka.consumer._
 import zio.kafka.producer._
-import zio.kafka.serde._
 import zio.rocksdb.RocksDB
 import zio.rocksdb.TransactionDB
 import zio.schema._
@@ -23,8 +22,6 @@ object StockPriceProducerBackend {
 }
 
 object StockPriceSimulator extends ZIOAppDefault {
-  import ImplicitSerde.{_, given}
-
   // Stock movement simulator
   def app = ZStream
     .repeatZIOChunk(ZIO.succeed(Main.STOCKS))
@@ -38,8 +35,8 @@ object StockPriceSimulator extends ZIOAppDefault {
             KafkaBackend.TOPIC_NAME,
             randomUuid,
             Movement(stockId = stock.id, change = randomChange),
-            zioKafkaSerde[UUID],
-            zioKafkaSerde[Movement]
+            Serde.zioKafkaSerde[UUID],
+            Serde.zioKafkaSerde[Movement]
           )
           .logError
       } yield ()
