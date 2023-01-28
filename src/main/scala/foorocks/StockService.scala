@@ -8,21 +8,22 @@ import zio.kafka._
 import zio.kafka.consumer._
 import zio.kafka.producer._
 import zio.kafka.serde._
+import zio.logging.LogFormat
+import zio.logging.backend.SLF4J
+import zio.logging.slf4j.bridge.Slf4jBridge
 import zio.rocksdb.RocksDB
 import zio.rocksdb.TransactionDB
 import zio.schema._
+import zio.schema.codec.DecodeError
 import zio.schema.codec.JsonCodec._
 import zio.stream.ZSink
 import zio.stream.ZStream
-import zio.logging.backend.SLF4J
+
 import java.nio.charset.StandardCharsets
 import java.util.UUID
-import zio.schema.codec.DecodeError
-import zio.logging.LogFormat
-import zio.logging.slf4j.bridge.Slf4jBridge
 
 object StockService {
-  def addStock(stock: Stock) = {
+  def addStock(stock: Stock): ZIO[TransactionDB, Throwable, Unit] = {
     val keySerde = summon[foorocks.Serde[UUID]]
     val valueSerde = summon[foorocks.Serde[Stock]]
     for {
@@ -36,13 +37,18 @@ object StockService {
 
   def updateStock(
       movement: Movement
-  ): ZIO[RocksDB, Object, Stock] = {
+  ): ZIO[RocksDB, Throwable, Option[Stock]] = {
     for {
       stock <- getStock(
         movement.stockId
       )
-      updatedStock = stock.copy(price = stock.price + movement.change)
-      _ <- putStock(updatedStock)
+      updatedStock = stock.map(stock =>
+        stock.copy(price = stock.price + movement.change)
+      )
+      _ <- updatedStock match
+        case None => ZIO.none
+        case Some(updatedStock) =>
+          putStock(updatedStock)
     } yield (updatedStock)
   }
 
@@ -57,7 +63,7 @@ object StockService {
     } yield ()
   }
 
-  def getStock(id: UUID): ZIO[RocksDB, Object, Stock] = {
+  def getStock(id: UUID): ZIO[RocksDB, Throwable, Option[Stock]] = {
     val keySerde = summon[foorocks.Serde[UUID]]
     val valueSerde = summon[foorocks.Serde[Stock]]
     for {
@@ -65,8 +71,9 @@ object StockService {
         .get(
           keySerde.serialize(id)
         )
-      bytes <- ZIO.fromOption(bytesOption)
-      stock <- valueSerde.deserializeZIO(bytes)
-    } yield (stock)
+      result <- bytesOption match
+        case None        => ZIO.none
+        case Some(bytes) => valueSerde.deserializeZIO(bytes).map(Some.apply)
+    } yield (result)
   }
 }

@@ -118,9 +118,11 @@ object Main extends ZIOAppDefault {
                       )
                     }
                   stocks <- ZIO.foreach(combinedMovements)(
-                    StockService.updateStock(
-                      _
-                    )
+                    StockService
+                      .updateStock(
+                        _
+                      )
+                      .some
                   )
                   _ <- ZIO.foreach(stocks)(stock =>
                     Producer.produceAsync(

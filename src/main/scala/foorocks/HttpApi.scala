@@ -31,6 +31,7 @@ object HttpApi {
       for {
         stock <- StockService
           .getStock(UUID.fromString(id))
+          .some
           .orElseFail(StockRecordNotFound(id))
       } yield Response.json(
         new String(summon[foorocks.Serde[Stock]].serialize(stock))
